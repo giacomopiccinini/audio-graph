@@ -1,19 +1,30 @@
-import librosa
+import io
 import random
+from typing import List
+
+import librosa
+import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-import matplotlib.pyplot as plt
-from typing import List
+from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+
+# Initialise router
+router = APIRouter()
 
 
 def audio_to_df(
-    audio_file: str, n_fft: int = 2048, n_mels: int = 256, hop_length: int = 512
+    audio_file: UploadFile,
+    max_length: float = 1200,
+    n_fft: int = 2048,
+    n_mels: int = 256,
+    hop_length: int = 512,
 ) -> pl.DataFrame:
     """Generate a df corresponding to a Mel spectrogram of an audio file.
     Columns are the Mel frequencies and rows are the timestamps."""
 
     # Load audio file
-    waveform, sr = librosa.load(audio_file, sr=None, mono=True)
+    waveform, sr = librosa.load(audio_file, sr=None, mono=True, duration=max_length)
 
     # Generate spectrogram
     spectrogram = librosa.feature.melspectrogram(
@@ -72,13 +83,13 @@ def generate_random_color():
 
 
 def plot_eq(
-    frequencies: list, spectra: list, instruments: list, threshold_db: float = -50.0
+    frequencies: list, spectra: list, tracks: list, threshold_db: float = -50.0
 ):
     # Init the figure
     fig = plt.figure(figsize=(20, 10))
 
     # Create a graph for every instrument
-    for instrument, frequency, spectrum in zip(instruments, frequencies, spectra):
+    for instrument, frequency, spectrum in zip(tracks, frequencies, spectra):
         # Pick a random color
         color = generate_random_color()
 
@@ -102,31 +113,71 @@ def plot_eq(
         plt.xlabel("Frequency (Hz)")
         plt.ylabel("Gain (dB)")
 
+    # Enforce tight layout to avoid useless margins
+    plt.tight_layout()
+
     return fig
 
 
-def create_eq(
-    audio_files: List[str], instruments: List[str], threshold_db: float = -50.0, normalize=False
+@router.post("/eq")
+def generate_eq(
+    audio_files: List[UploadFile],
+    max_length: float = 1200,
+    max_files: int = 5,
+    threshold_db: float = -50.0,
+    normalize=False,
 ):
     """Create an EQ graph for a list of audio files and a list of instruments.
     The audio files must be in the same order as the instruments."""
 
+    # Exceed number of admissible audio files to be processed
+    # in batch
+    if len(audio_files) > max_files:
+        # Create error message
+        ERROR = {
+            "code": "413",
+            "type": "payload too large",
+            "error": "too many files uploaded at once",
+            "message": f"resubmit request with no more than {max_files} files",
+        }
+
+        raise HTTPException(status_code=413, detail=ERROR)
+
     # Compute the mean of the spectrogram for each audio file
     spectra_and_frequencies = [
         compute_spectrum(
-            filter_silence(audio_to_df(audio_file), threshold_db=threshold_db)
+            filter_silence(
+                audio_to_df(audio_file.file, max_length=max_length),
+                threshold_db=threshold_db,
+            )
         )
         for audio_file in audio_files
     ]
 
+    # Get the tracks
+    tracks = [audio_file.filename for audio_file in audio_files]
+
     # Disentangle
     spectra, frequencies = zip(*spectra_and_frequencies)
-    
+
     # If normalize, normalize the spectra
     if normalize:
-        spectra = spectra - np.nanmax(spectra, axis=1, keepdims=True) + np.nanmax(spectra)
+        spectra = (
+            spectra - np.nanmax(spectra, axis=1, keepdims=True) + np.nanmax(spectra)
+        )
 
     # Plot the EQ
-    fig = plot_eq(frequencies, spectra, instruments, threshold_db=threshold_db)
-    
-    return fig
+    fig = plot_eq(frequencies, spectra, tracks, threshold_db=threshold_db)
+
+    # Save to an in-memory bytes buffer
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+
+    # Move the cursor to the beginning of the buffer
+    buf.seek(0)
+
+    # Close the plt figure to free up memory
+    plt.close(fig)
+
+    # Return the image as a streaming response
+    return StreamingResponse(buf, media_type="image/png")
