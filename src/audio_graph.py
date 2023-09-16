@@ -1,6 +1,9 @@
 import librosa
+import random
 import numpy as np
 import polars as pl
+import matplotlib.pyplot as plt
+from typing import List
 
 
 def audio_to_df(
@@ -23,30 +26,15 @@ def audio_to_df(
         int
     )
 
-    # # Compute timestamps
-    # timestamps = np.arange(0, len(waveform), hop_length)
-
-    # # Fix the last entry of the timestamp if necessary
-    # if len(timestamps) == len(waveform) - 1:
-    #     timestamps = np.append(timestamps, len(waveform))
-
-    # # Convert to seconds
-    # timestamps = timestamps * 1 / sr
-
     # Create dataframe
     df = pl.from_numpy(spectrogram.transpose()).rename(
         {f"column_{i}": f"{f}" for i, f in enumerate(frequencies.astype(str))}
     )
 
-    # # Add timestamps and reorder columns
-    # df = df.with_columns(pl.lit(timestamps).alias("timestamp")).select(
-    #     pl.col("timestamp"), pl.all().exclude("timestamp")
-    # )
-
     return df
 
 
-def filter_silence(df: pl.DataFrame, threshold_db: float = -50):
+def filter_silence(df: pl.DataFrame, threshold_db: float = -50.0):
     """Filter out silent frames from a spectrogram dataframe.
     The threshold is in decibels."""
 
@@ -60,20 +48,85 @@ def filter_silence(df: pl.DataFrame, threshold_db: float = -50):
         ]
     )
 
-def compute_metric(df: pl.DataFrame) -> pl.DataFrame:
-    
-    """ Compute the mean of the Mel spectrogram. In particular,
-    it returns the vector of the mean of each Mel frequency as numpy 
+
+def compute_spectrum(df: pl.DataFrame) -> pl.DataFrame:
+    """Compute the mean of the Mel spectrogram. In particular,
+    it returns the vector of the mean of each Mel frequency as numpy
     arrays."""
 
     # Compute the mean
     df = df.mean()
-    
+
     # Get the frequencies
     frequencies = np.asarray(df.columns).astype(int)
-    
+
     # Get the actual means
     means = df.to_numpy().reshape(-1)
-    
+
     return means, frequencies
+
+
+def generate_random_color():
+    """Generate a random HEX color to be used in the graph"""
+    return "#" + "".join([random.choice("0123456789ABCDEF") for i in range(6)])
+
+
+def plot_eq(
+    frequencies: list, spectra: list, instruments: list, threshold_db: float = -50.0
+):
+    # Init the figure
+    fig = plt.figure(figsize=(20, 10))
+
+    # Create a graph for every instrument
+    for instrument, frequency, spectrum in zip(instruments, frequencies, spectra):
+        # Pick a random color
+        color = generate_random_color()
+
+        # Plot the frequency response
+        plt.plot(frequency, spectrum, label=instrument, color=color)
+
+        # Fill the area below the threshold
+        plt.fill_between(frequency, threshold_db, spectrum, alpha=0.2, color=color)
+
+        # Use a log scale on the x axis
+        plt.xscale("log")
+
+        # Define custom ticks to mimic e.g. FabFilter Pro-Q 3
+        ticks = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+        plt.xticks(ticks, [str(tick) for tick in ticks])
+
+        # Add a legend
+        plt.legend(fontsize="large")
+
+        # Name the axis
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Gain (dB)")
+
+    return fig
+
+
+def create_eq(
+    audio_files: List[str], instruments: List[str], threshold_db: float = -50.0, normalize=False
+):
+    """Create an EQ graph for a list of audio files and a list of instruments.
+    The audio files must be in the same order as the instruments."""
+
+    # Compute the mean of the spectrogram for each audio file
+    spectra_and_frequencies = [
+        compute_spectrum(
+            filter_silence(audio_to_df(audio_file), threshold_db=threshold_db)
+        )
+        for audio_file in audio_files
+    ]
+
+    # Disentangle
+    spectra, frequencies = zip(*spectra_and_frequencies)
     
+    # If normalize, normalize the spectra
+    if normalize:
+        spectra = spectra - np.nanmax(spectra, axis=1, keepdims=True) + np.nanmax(spectra)
+
+    # Plot the EQ
+    fig = plot_eq(frequencies, spectra, instruments, threshold_db=threshold_db)
+    
+    return fig
