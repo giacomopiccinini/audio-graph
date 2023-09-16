@@ -1,3 +1,4 @@
+import io
 import random
 from typing import List
 
@@ -6,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
 # Initialise router
 router = APIRouter()
@@ -111,16 +113,15 @@ def plot_eq(
         plt.xlabel("Frequency (Hz)")
         plt.ylabel("Gain (dB)")
 
-    return fig
+    # Enforce tight layout to avoid useless margins
+    plt.tight_layout()
 
-    
-from fastapi import  Form
+    return fig
 
 
 @router.post("/eq")
 def generate_eq(
     audio_files: List[UploadFile],
-    tracks: List[str] = Form(...),
     max_length: float = 1200,
     max_files: int = 5,
     threshold_db: float = -50.0,
@@ -153,6 +154,9 @@ def generate_eq(
         for audio_file in audio_files
     ]
 
+    # Get the tracks
+    tracks = [audio_file.filename for audio_file in audio_files]
+
     # Disentangle
     spectra, frequencies = zip(*spectra_and_frequencies)
 
@@ -165,4 +169,15 @@ def generate_eq(
     # Plot the EQ
     fig = plot_eq(frequencies, spectra, tracks, threshold_db=threshold_db)
 
-    return {"eq": "ok"}
+    # Save to an in-memory bytes buffer
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)  # Move the cursor to the beginning of the buffer
+
+    # Close the plt figure to free up memory
+    plt.close(fig)
+
+    # Return the image as a streaming response
+    return StreamingResponse(buf, media_type="image/png")
+
+    # return {"eq": tracks}
