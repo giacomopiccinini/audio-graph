@@ -10,6 +10,12 @@ image = modal.Image.debian_slim(python_version="3.10")
 # Pip install packages
 image = image.pip_install("librosa", "polars", "matplotlib")
 
+# Copy the static directory with CSS
+image = image.copy_local_dir(
+    local_path="src",
+    remote_path="/root/src",
+)
+
 # Assign image to stub
 stub.image = image
 

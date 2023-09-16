@@ -5,8 +5,7 @@ import librosa
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from fastapi import APIRouter, HTTPException
-from starlette.datastructures import UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile
 
 # Initialise router
 router = APIRouter()
@@ -82,13 +81,13 @@ def generate_random_color():
 
 
 def plot_eq(
-    frequencies: list, spectra: list, instruments: list, threshold_db: float = -50.0
+    frequencies: list, spectra: list, tracks: list, threshold_db: float = -50.0
 ):
     # Init the figure
     fig = plt.figure(figsize=(20, 10))
 
     # Create a graph for every instrument
-    for instrument, frequency, spectrum in zip(instruments, frequencies, spectra):
+    for instrument, frequency, spectrum in zip(tracks, frequencies, spectra):
         # Pick a random color
         color = generate_random_color()
 
@@ -114,11 +113,14 @@ def plot_eq(
 
     return fig
 
+    
+from fastapi import  Form
+
 
 @router.post("/eq")
 def generate_eq(
     audio_files: List[UploadFile],
-    instruments: List[str],
+    tracks: List[str] = Form(...),
     max_length: float = 1200,
     max_files: int = 5,
     threshold_db: float = -50.0,
@@ -144,7 +146,7 @@ def generate_eq(
     spectra_and_frequencies = [
         compute_spectrum(
             filter_silence(
-                audio_to_df(audio_file, max_length=max_length),
+                audio_to_df(audio_file.file, max_length=max_length),
                 threshold_db=threshold_db,
             )
         )
@@ -161,6 +163,6 @@ def generate_eq(
         )
 
     # Plot the EQ
-    fig = plot_eq(frequencies, spectra, instruments, threshold_db=threshold_db)
+    fig = plot_eq(frequencies, spectra, tracks, threshold_db=threshold_db)
 
-    return fig
+    return {"eq": "ok"}
