@@ -3,3 +3,4 @@ pipreqs
 numpy
 tqdm
 python-decouple
+pillow
