@@ -172,12 +172,12 @@ def generate_eq(
     # Save to an in-memory bytes buffer
     buf = io.BytesIO()
     plt.savefig(buf, format="png")
-    buf.seek(0)  # Move the cursor to the beginning of the buffer
+
+    # Move the cursor to the beginning of the buffer
+    buf.seek(0)
 
     # Close the plt figure to free up memory
     plt.close(fig)
 
     # Return the image as a streaming response
     return StreamingResponse(buf, media_type="image/png")
-
-    # return {"eq": tracks}
